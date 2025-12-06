@@ -3,7 +3,7 @@ from .core import (
     DatasetRiskProcessor,
     DatasetRiskConfig,
     HeuristicCodeColumnDetector,
-    HeuristicRiskScorer,
+    DebertaRiskScorer,
 )
 
 __all__ = [
@@ -11,5 +11,5 @@ __all__ = [
     "DatasetRiskProcessor",
     "DatasetRiskConfig",
     "HeuristicCodeColumnDetector",
-    "HeuristicRiskScorer",
+    "DebertaRiskScorer"
 ]

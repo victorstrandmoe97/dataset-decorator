@@ -8,11 +8,11 @@ from datasets import load_dataset
 from dataset_risk_decorator.core import (
     DatasetRiskDecorator,
     HeuristicCodeColumnDetector,
-    HeuristicRiskScorer,
+    DebertaRiskScorer,
 )
 
 detector = HeuristicCodeColumnDetector()
-scorer = HeuristicRiskScorer()
+scorer = scorer = DebertaRiskScorer("deberta-devign-risk-model")
 
 # Default threshold = 0.5 is fine here
 risk_guard = DatasetRiskDecorator(

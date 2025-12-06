@@ -1,11 +1,29 @@
 [tool.poetry]
 name = "dataset-risk-decorator"
 version = "0.1.1"
-description = "Risk-aware dataset decorator for Hugging Face datasets with code vulnerability scoring"
+description = "Risk-aware dataset decorator for Hugging Face datasets with automatic code detection and security risk labeling"
 authors = ["Durinn <victorstrandmoe@gmail.com>"]
 readme = "README.md"
+license = "Apache-2.0"
 
-packages = [{ include = "dataset_risk_decorator" }]
+homepage = "https://durinn-as.web.app/"
+repository = "https://github.com/your-org/dataset-risk-decorator"
+keywords = ["security", "datasets", "huggingface", "mlops", "code", "safety"]
+
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Topic :: Security",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+packages = [
+  { include = "dataset_risk_decorator" }
+]
 
 [tool.poetry.dependencies]
 python = ">=3.9,<3.13"
@@ -15,7 +33,7 @@ datasets = ">=2.18.0"
 transformers = ">=4.40.0"
 huggingface-hub = ">=0.23.0"
 
-# Deep learning backend
+# Deep learning backend (for fine-tuned scorers)
 torch = ">=2.1.0"
 
 # Core utilities
@@ -31,6 +49,8 @@ pytest = ">=8.0.0"
 ruff = ">=0.3.0"
 mypy = ">=1.8.0"
 ipython = ">=8.20.0"
+build = ">=1.2.1"
+twine = ">=6.0.1"
 
 [build-system]
 requires = ["poetry-core>=1.8.0"]

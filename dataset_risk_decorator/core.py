@@ -11,10 +11,10 @@ MVP: Dataset risk annotation and decorator layer for Hugging Face datasets.
 Intended usage:
 
     from datasets import load_dataset
-    from risk_decorator import DatasetRiskDecorator, HeuristicCodeColumnDetector, HeuristicRiskScorer
+    from risk_decorator import DatasetRiskDecorator, HeuristicCodeColumnDetector, DebertaRiskScorer
 
     detector = HeuristicCodeColumnDetector()
-    scorer = HeuristicRiskScorer()
+    scorer = scorer = DebertaRiskScorer("deberta-devign-risk-model")
     risk_guard = DatasetRiskDecorator(detector=detector, scorer=scorer, threshold=0.5)
 
     @risk_guard
@@ -77,6 +77,17 @@ class IRiskScorer(Protocol):
         """
         ...
 
+
+class IDebertaRiskScorer(IRiskScorer, Protocol):
+    """
+    Interface for learned DeBERTa-backed risk scorers.
+    """
+
+    def __init__(self, model_path: str, device: str | None = None) -> None:
+        ...
+
+    def score(self, code: str) -> float:
+        ...
 
 class IDatasetAnnotator(Protocol):
     """
@@ -261,53 +272,63 @@ class HeuristicCodeColumnDetector(ICodeColumnDetector):
         return detected
 
 
+import torch
+from typing import Optional
+from transformers import (
+    AutoModelForSequenceClassification,
+    DebertaV2Tokenizer,
+)
+
+
 @dataclass
-class HeuristicRiskScorer(IRiskScorer):
+class DebertaRiskScorer(IDebertaRiskScorer):
     """
-    Very simple heuristic risk scorer for code.
+    Learned risk scorer backed by a fine-tuned DeBERTa classifier.
 
-    Scoring strategy:
-        - Count occurrences of "suspicious" tokens
-        - Normalize by a configurable factor
-        - Clamp to [0.0, 1.0]
-
-    This is intentionally dumb but deterministic and side-effect free.
-    Replace with a learned model / static analyzer for real use.
+    Expects a binary classification head where:
+      - label 0 = safe
+      - label 1 = problematic
     """
 
-    dangerous_tokens: List[str] = field(
-        default_factory=lambda: [
-            "eval(",
-            "exec(",
-            "system(",
-            "subprocess.",
-            "os.popen",
-            "pickle.loads",
-            "yaml.load(",
-            "rm -rf",
-            "DROP TABLE",
-            "xp_cmdshell",
-            "shell=True",
-            "sudo ",
-        ]
-    )
-    normalization_factor: float = 5.0
+    def __init__(
+        self,
+        model_path: str,
+        device: Optional[str] = None,
+    ):
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
+        # ✅ Explicit tokenizer as requested
+        self.tokenizer = DebertaV2Tokenizer.from_pretrained(
+            "microsoft/deberta-v3-base"
+        )
+
+        self.model = AutoModelForSequenceClassification.from_pretrained(model_path)
+        self.model.to(self.device)
+        self.model.eval()
+
+    @torch.no_grad()
     def score(self, code: str) -> float:
-        text = code or ""
-        lower = text.lower()
-
-        hits = 0
-        for token in self.dangerous_tokens:
-            # count non-overlapping occurrences, case-insensitive
-            hits += lower.count(token.lower())
-
-        raw_score = hits / self.normalization_factor
-        if raw_score > 1.0:
-            return 1.0
-        if raw_score < 0.0:
+        """
+        Returns probability in [0.0, 1.0] that the code is problematic.
+        """
+        if not isinstance(code, str) or not code.strip():
             return 0.0
-        return float(raw_score)
+
+        inputs = self.tokenizer(
+            code,
+            return_tensors="pt",
+            truncation=True,
+            max_length=512,
+            padding=True,
+        )
+
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+        logits = self.model(**inputs).logits
+        probs = torch.softmax(logits, dim=-1)
+
+        # Probability of class = 1 ("problematic")
+        return float(probs[0, 1].item())
 
 
 @dataclass
@@ -428,7 +449,7 @@ class DatasetRiskDecorator(IDatasetRiskDecorator):
     Example:
 
         detector = HeuristicCodeColumnDetector()
-        scorer = HeuristicRiskScorer()
+        scorer = scorer = DebertaRiskScorer("deberta-devign-risk-model")
         risk_guard = DatasetRiskDecorator(detector=detector, scorer=scorer, threshold=0.5)
 
         @risk_guard
@@ -493,7 +514,7 @@ if __name__ == "__main__":
     ds = Dataset.from_dict(data)
 
     detector = HeuristicCodeColumnDetector()
-    scorer = HeuristicRiskScorer()
+    scorer = scorer = DebertaRiskScorer("deberta-devign-risk-model")
     processor = DatasetRiskProcessor(
         detector=detector,
         scorer=scorer,
