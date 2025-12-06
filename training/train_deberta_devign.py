@@ -63,6 +63,10 @@ ds = load_devign()
 train_ds = ds["train"]
 eval_ds = ds["test"]
 
+##### For faster iteration during development, we limit dataset size
+train_ds = train_ds.shuffle(seed=42).select(range(1000))
+eval_ds  = eval_ds.shuffle(seed=42).select(range(250))
+
 # -----------------------------
 # 2. Build Text + Label Fields
 # -----------------------------
