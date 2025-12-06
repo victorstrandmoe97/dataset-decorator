@@ -1,0 +1,39 @@
+"""
+Example: Using DatasetRiskDecorator with DetectVul/devign
+"""
+import sys, os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from datasets import load_dataset
+from risk_decorator import (
+    DatasetRiskDecorator,
+    HeuristicCodeColumnDetector,
+    HeuristicRiskScorer,
+)
+
+# Instantiate core components
+detector = HeuristicCodeColumnDetector()
+scorer = HeuristicRiskScorer()
+
+# Create decorator with default threshold = 0.5
+risk_guard = DatasetRiskDecorator(
+    detector=detector,
+    scorer=scorer,
+    threshold=0.5,
+)
+
+@risk_guard
+def load_devign():
+    # Devign typically provides train/validation/test splits
+    return load_dataset("DetectVul/devign")
+
+if __name__ == "__main__":
+    ds = load_devign()
+
+    train = ds["train"]
+    problematic = train.filter(lambda x: x["is_problematic"])
+
+    for i in range(min(20, len(problematic))):
+        row = problematic[i]
+        print("\n---")
+        print("risk_score:", row["risk_score"])
