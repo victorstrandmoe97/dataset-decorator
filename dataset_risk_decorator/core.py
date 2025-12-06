@@ -157,15 +157,17 @@ class DatasetRiskConfig:
 # Concrete implementations
 # ---------------------------------------------------------------------------
 
+import re
+from datasets import Dataset
 
 @dataclass
 class HeuristicCodeColumnDetector(ICodeColumnDetector):
     """
-    Heuristic code-column detector.
+    Content-first + name-fallback code column detector.
 
     Strategy:
-    - Prefer column names containing common code-related tokens.
-    - Only consider string-like columns (if dtype information is present).
+    1. Sample N rows and detect code by syntax patterns.
+    2. If nothing is found, fall back to name-based heuristics.
     """
 
     name_keywords: List[str] = field(
@@ -181,25 +183,77 @@ class HeuristicCodeColumnDetector(ICodeColumnDetector):
             "completion",
             "implementation",
             "output",
-            "chosen",   
-            "rejected", 
+            "chosen",
+            "rejected",
         ]
     )
 
+    # Very lightweight language-agnostic code signals
+    code_regexes: List[re.Pattern] = field(
+        default_factory=lambda: [
+            re.compile(r"\b(def|class|import|from)\b"),      # Python
+            re.compile(r"\b(function|const|let|var)\b"),    # JS
+            re.compile(r";\s*$"),                            # C/Java/JS
+            re.compile(r"#include\b"),                       # C/C++
+            re.compile(r"\b(public|private|static)\b"),     # Java/C#
+            re.compile(r"{\s*$"),                            # Block open
+            re.compile(r"}\s*$"),                            # Block close
+        ]
+    )
+
+    sample_size: int = 50
+    min_hits: int = 3   # how many regex hits are needed to count as "code"
+
     def detect_columns(self, schema: Dict[str, Any]) -> List[str]:
+        """
+        Fallback-only method (kept for interface compatibility).
+        Real detection happens in detect_from_dataset().
+        """
+        return self._detect_by_name(schema)
+
+    def detect_from_dataset(self, dataset: Dataset) -> List[str]:
+        """
+        Primary detection method using actual row content.
+        """
+        candidates = [
+            col for col, feat in dataset.features.items()
+            if getattr(feat, "dtype", None) is None
+            or "string" in str(getattr(feat, "dtype", "")).lower()
+        ]
+
+        hit_counter: Dict[str, int] = {c: 0 for c in candidates}
+
+        sample = dataset.select(range(min(self.sample_size, len(dataset))))
+
+        for row in sample:
+            for col in candidates:
+                val = row.get(col)
+                if not isinstance(val, str):
+                    continue
+
+                for rx in self.code_regexes:
+                    if rx.search(val):
+                        hit_counter[col] += 1
+
+        detected = [col for col, hits in hit_counter.items() if hits >= self.min_hits]
+
+        # If content-based detection fails → fallback to name-based
+        if not detected:
+            detected = self._detect_by_name(dict(dataset.features))
+
+        return detected
+
+    def _detect_by_name(self, schema: Dict[str, Any]) -> List[str]:
         detected: List[str] = []
 
         for col_name, feature in schema.items():
             lower_name = col_name.lower()
 
-            # 1) Name-based heuristic
             if not any(k in lower_name for k in self.name_keywords):
                 continue
 
-            # 2) (Soft) type-based check: only string-like features if dtype is available
             dtype = getattr(feature, "dtype", None)
-            if dtype is not None and "string" not in str(dtype):
-                # if dtype is explicitly non-string, skip
+            if dtype is not None and "string" not in str(dtype).lower():
                 continue
 
             detected.append(col_name)
@@ -312,9 +366,14 @@ class DatasetRiskProcessor(IDatasetProcessor):
     config: DatasetRiskConfig = field(default_factory=DatasetRiskConfig)
 
     def _detect_code_columns(self, dataset: Dataset) -> CodeDetectionResult:
-        features: Features = dataset.features
-        schema_dict: Dict[str, Any] = dict(features)
-        cols = self.detector.detect_columns(schema_dict)
+        # Prefer content-based detection if implemented
+        if hasattr(self.detector, "detect_from_dataset"):
+            cols = self.detector.detect_from_dataset(dataset)
+        else:
+            features: Features = dataset.features
+            schema_dict: Dict[str, Any] = dict(features)
+            cols = self.detector.detect_columns(schema_dict)
+
         return CodeDetectionResult(detected_columns=cols)
 
     def _annotate_single_dataset(self, dataset: Dataset) -> Dataset:
