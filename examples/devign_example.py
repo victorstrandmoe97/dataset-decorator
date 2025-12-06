@@ -1,11 +1,11 @@
 """
 Example: Using DatasetRiskDecorator with DetectVul/devign
 """
-import sys, os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# import sys, os
+# sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from datasets import load_dataset
-from risk_decorator import (
+from dataset_risk_decorator.core import (
     DatasetRiskDecorator,
     HeuristicCodeColumnDetector,
     HeuristicRiskScorer,

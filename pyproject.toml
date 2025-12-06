@@ -1,0 +1,37 @@
+[tool.poetry]
+name = "dataset-risk-decorator"
+version = "0.1.0"
+description = "Risk-aware dataset decorator for Hugging Face datasets with code vulnerability scoring"
+authors = ["Durinn <victorstrandmoe@gmail.com>"]
+readme = "README.md"
+
+packages = [{ include = "dataset_risk_decorator" }]
+
+[tool.poetry.dependencies]
+python = ">=3.9,<3.13"
+
+# Hugging Face stack
+datasets = ">=2.18.0"
+transformers = ">=4.40.0"
+huggingface-hub = ">=0.23.0"
+
+# Deep learning backend
+torch = ">=2.1.0"
+
+# Core utilities
+pyarrow = ">=15.0.0"
+numpy = ">=1.24.0"
+tqdm = ">=4.66.0"
+
+# Typing / runtime compatibility
+typing-extensions = ">=4.9.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0.0"
+ruff = ">=0.3.0"
+mypy = ">=1.8.0"
+ipython = ">=8.20.0"
+
+[build-system]
+requires = ["poetry-core>=1.8.0"]
+build-backend = "poetry.core.masonry.api"

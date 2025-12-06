@@ -14,3 +14,23 @@ pip install datasets
 python examples/devign_example.py
 python examples/cybernative_dpo_example.py
 python examples/alpaca_cleaned_example.py
+
+
+```
+deactivate
+rm -rf .venv
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -e .
+
+```
+
+
+verify 
+```
+python -c "from dataset_risk_decorator import DatasetRiskDecorator; print('OK')"
+python -c "import datasets; print('datasets OK')"
+python examples/alpaca_cleaned_example.py
+
+```

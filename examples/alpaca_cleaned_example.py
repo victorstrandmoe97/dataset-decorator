@@ -1,11 +1,11 @@
 """
 Example: Using DatasetRiskDecorator with yahma/alpaca-cleaned
 """
-import sys, os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# import sys, os
+# sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from datasets import load_dataset
-from risk_decorator import (
+from dataset_risk_decorator.core import (
     DatasetRiskDecorator,
     HeuristicCodeColumnDetector,
     HeuristicRiskScorer,
@@ -29,12 +29,10 @@ if __name__ == "__main__":
     ds = load_alpaca()
     split = ds["train"]
 
-    print("Total rows:", len(split))
-    print("Columns:", split.column_names)
+    train = ds["train"]
+    problematic = train.filter(lambda x: x["is_problematic"])
 
-    # Show a few annotated samples
-    for i in range(3):
-        row = split[i]
-        print(f"\nRow {i}")
+    for i in range(min(20, len(problematic))):
+        row = problematic[i]
+        print("\n---")
         print("risk_score:", row["risk_score"])
-        print("is_problematic:", row["is_problematic"])
