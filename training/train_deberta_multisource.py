@@ -93,7 +93,7 @@ model = AutoModelForSequenceClassification.from_pretrained(
 
 training_args = TrainingArguments(
     output_dir="./deberta-poison-taster",
-    evaluation_strategy="epoch",
+    eval_strategy="epoch",
     save_strategy="epoch",
     learning_rate=2e-5,
     per_device_train_batch_size=4,
@@ -104,6 +104,7 @@ training_args = TrainingArguments(
     fp16=False,
     report_to="none",
 )
+
 
 # -----------------------------
 # 7. TRAINER
