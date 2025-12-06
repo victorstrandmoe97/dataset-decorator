@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "dataset-risk-decorator"
-version = "0.1.0"
+version = "0.1.1"
 description = "Risk-aware dataset decorator for Hugging Face datasets with code vulnerability scoring"
 authors = ["Durinn <victorstrandmoe@gmail.com>"]
 readme = "README.md"
