@@ -1,0 +1,99 @@
+# Large datasets
+data/
+datasets/
+*.arrow
+*.parquet
+*.jsonl
+*.csv
+*.tsv
+
+# Hugging Face caches
+.cache/
+.cache/huggingface/
+.huggingface/
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.db
+*.sqlite3
+
+# =========================
+# Virtual Environments
+# =========================
+.venv/
+venv/
+ENV/
+env/
+
+# =========================
+# Poetry / Pip / Build Artifacts
+# =========================
+dist/
+build/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+poetry.lock
+
+# =========================
+# PyPI / Packaging
+# =========================
+*.whl
+*.tar.gz
+
+# =========================
+# Hugging Face / Datasets Cache
+# =========================
+.cache/
+.cache/huggingface/
+.huggingface/
+hf_cache/
+
+# =========================
+# Jupyter / IPython
+# =========================
+.ipynb_checkpoints/
+.profile_default/
+
+# =========================
+# Testing / Coverage
+# =========================
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+
+# =========================
+# OS / Editor
+# =========================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# =========================
+# Secrets / Env
+# =========================
+.env
+.env.*
+*.env
+secrets.yml
+
+# =========================
+# Temporary
+# =========================
+tmp/
+temp/
