@@ -12,14 +12,16 @@ from dataset_risk_decorator.core import (
 )
 
 detector = HeuristicCodeColumnDetector()
-scorer = scorer = DebertaRiskScorer("deberta-devign-risk-model")
+scorer = scorer = DebertaRiskScorer("microsoft/deberta-v3-base")
 
 # Default threshold = 0.5 is fine here
 risk_guard = DatasetRiskDecorator(
     detector=detector,
     scorer=scorer,
     threshold=0.5,
+    filter_mode="keep_safe"
 )
+
 
 @risk_guard
 def load_alpaca():

@@ -19,6 +19,7 @@ risk_guard = DatasetRiskDecorator(
     detector=detector,
     scorer=scorer,
     threshold=0.6,
+    filter_mode="keep_safe"
 )
 
 @risk_guard

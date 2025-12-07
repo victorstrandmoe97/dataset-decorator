@@ -20,6 +20,7 @@ risk_guard = DatasetRiskDecorator(
     detector=detector,
     scorer=scorer,
     threshold=0.5,
+    filter_mode="keep_safe"
 )
 
 @risk_guard
@@ -31,6 +32,10 @@ if __name__ == "__main__":
     ds = load_devign()
 
     train = ds["train"]
+
+    # ✅ NO FILTER CALLS IN USER LAND
+    print("Final train size:", len(train))
+
     problematic = train.filter(lambda x: x["is_problematic"])
 
     for i in range(min(20, len(problematic))):
