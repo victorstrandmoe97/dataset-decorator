@@ -1,27 +1,13 @@
 """
 risk_decorator.py
 
-MVP: Dataset risk annotation and decorator layer for Hugging Face datasets.
+MVP: Dataset risk annotation + filtering layer for Hugging Face datasets.
 
 - Automatically detects code-like columns (heuristically)
-- Scores code snippets with a simple risk function
+- Scores code snippets with a learned DeBERTa model
 - Injects `risk_score` and `is_problematic` into each row
+- Optionally FILTERS the dataset based on the probability score
 - Provides a decorator that wraps any dataset loader function
-
-Intended usage:
-
-    from datasets import load_dataset
-    from risk_decorator import DatasetRiskDecorator, HeuristicCodeColumnDetector, DebertaRiskScorer
-
-    detector = HeuristicCodeColumnDetector()
-    scorer = scorer = DebertaRiskScorer("deberta-devign-risk-model")
-    risk_guard = DatasetRiskDecorator(detector=detector, scorer=scorer, threshold=0.5)
-
-    @risk_guard
-    def load_devign():
-        return load_dataset("DetectVul/devign")
-
-    ds = load_devign()
 """
 
 from __future__ import annotations
@@ -34,118 +20,48 @@ from typing import (
     List,
     Protocol,
     Union,
+    Literal,
+    Optional,
 )
 
 from datasets import Dataset, DatasetDict, Features
 
 HF_Dataset = Union[Dataset, DatasetDict]
 
-
 # ---------------------------------------------------------------------------
 # Interfaces / Protocols
 # ---------------------------------------------------------------------------
 
-
 class ICodeColumnDetector(Protocol):
-    """
-    Detects which columns in a dataset schema contain source code.
-    """
-
-    def detect_columns(self, schema: Dict[str, Any]) -> List[str]:
-        """
-        Args:
-            schema: Dataset features/schema dictionary (e.g. ds.features)
-
-        Returns:
-            List of column names that contain source code.
-        """
-        ...
+    def detect_columns(self, schema: Dict[str, Any]) -> List[str]: ...
 
 
 class IRiskScorer(Protocol):
-    """
-    Scores a code snippet for security / policy risk.
-    """
-
-    def score(self, code: str) -> float:
-        """
-        Args:
-            code: Source code snippet
-
-        Returns:
-            Risk score in the range [0.0, 1.0].
-        """
-        ...
+    def score(self, code: str) -> float: ...
 
 
 class IDebertaRiskScorer(IRiskScorer, Protocol):
-    """
-    Interface for learned DeBERTa-backed risk scorers.
-    """
+    def __init__(self, model_path: str, device: str | None = None) -> None: ...
+    def score(self, code: str) -> float: ...
 
-    def __init__(self, model_path: str, device: str | None = None) -> None:
-        ...
-
-    def score(self, code: str) -> float:
-        ...
 
 class IDatasetAnnotator(Protocol):
-    """
-    Injects risk metadata into dataset rows.
-    """
-
-    def annotate_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Args:
-            row: Single dataset example
-
-        Returns:
-            Updated row with at least:
-                - "risk_score": float
-                - "is_problematic": bool
-        """
-        ...
+    def annotate_row(self, row: Dict[str, Any]) -> Dict[str, Any]: ...
 
 
 class IDatasetProcessor(Protocol):
-    """
-    Applies risk analysis to Hugging Face datasets.
-    """
-
-    def process(self, dataset: HF_Dataset) -> HF_Dataset:
-        """
-        Args:
-            dataset: HuggingFace Dataset or DatasetDict
-
-        Returns:
-            Fully annotated Dataset / DatasetDict.
-        """
-        ...
+    def process(self, dataset: HF_Dataset) -> HF_Dataset: ...
 
 
 class IDatasetRiskDecorator(Protocol):
-    """
-    Wraps dataset loader functions with risk analysis.
-    """
-
     def __call__(
         self,
         loader_fn: Callable[..., HF_Dataset],
-    ) -> Callable[..., HF_Dataset]:
-        """
-        Args:
-            loader_fn: Any function returning a HF Dataset or DatasetDict.
-
-        Returns:
-            Wrapped function that returns an annotated dataset.
-        """
-        ...
-
+    ) -> Callable[..., HF_Dataset]: ...
 
 # ---------------------------------------------------------------------------
 # Data contracts
 # ---------------------------------------------------------------------------
-
 
 @dataclass(frozen=True)
 class RiskAnnotation:
@@ -162,70 +78,39 @@ class CodeDetectionResult:
 class DatasetRiskConfig:
     threshold: float = 0.5
     fail_on_no_code_columns: bool = False
-
+    filter_mode: Literal["none", "keep_safe", "keep_problematic"] = "none"
 
 # ---------------------------------------------------------------------------
-# Concrete implementations
+# Heuristic Code Column Detection
 # ---------------------------------------------------------------------------
 
 import re
-from datasets import Dataset
 
 @dataclass
 class HeuristicCodeColumnDetector(ICodeColumnDetector):
-    """
-    Content-first + name-fallback code column detector.
+    name_keywords: List[str] = field(default_factory=lambda: [
+        "code", "source", "snippet", "body", "func", "function",
+        "solution", "response", "completion", "implementation",
+        "output", "chosen", "rejected",
+    ])
 
-    Strategy:
-    1. Sample N rows and detect code by syntax patterns.
-    2. If nothing is found, fall back to name-based heuristics.
-    """
-
-    name_keywords: List[str] = field(
-        default_factory=lambda: [
-            "code",
-            "source",
-            "snippet",
-            "body",
-            "func",
-            "function",
-            "solution",
-            "response",
-            "completion",
-            "implementation",
-            "output",
-            "chosen",
-            "rejected",
-        ]
-    )
-
-    # Very lightweight language-agnostic code signals
-    code_regexes: List[re.Pattern] = field(
-        default_factory=lambda: [
-            re.compile(r"\b(def|class|import|from)\b"),      # Python
-            re.compile(r"\b(function|const|let|var)\b"),    # JS
-            re.compile(r";\s*$"),                            # C/Java/JS
-            re.compile(r"#include\b"),                       # C/C++
-            re.compile(r"\b(public|private|static)\b"),     # Java/C#
-            re.compile(r"{\s*$"),                            # Block open
-            re.compile(r"}\s*$"),                            # Block close
-        ]
-    )
+    code_regexes: List[re.Pattern] = field(default_factory=lambda: [
+        re.compile(r"\b(def|class|import|from)\b"),
+        re.compile(r"\b(function|const|let|var)\b"),
+        re.compile(r";\s*$"),
+        re.compile(r"#include\b"),
+        re.compile(r"\b(public|private|static)\b"),
+        re.compile(r"{\s*$"),
+        re.compile(r"}\s*$"),
+    ])
 
     sample_size: int = 50
-    min_hits: int = 3   # how many regex hits are needed to count as "code"
+    min_hits: int = 3
 
     def detect_columns(self, schema: Dict[str, Any]) -> List[str]:
-        """
-        Fallback-only method (kept for interface compatibility).
-        Real detection happens in detect_from_dataset().
-        """
         return self._detect_by_name(schema)
 
     def detect_from_dataset(self, dataset: Dataset) -> List[str]:
-        """
-        Primary detection method using actual row content.
-        """
         candidates = [
             col for col, feat in dataset.features.items()
             if getattr(feat, "dtype", None) is None
@@ -233,7 +118,6 @@ class HeuristicCodeColumnDetector(ICodeColumnDetector):
         ]
 
         hit_counter: Dict[str, int] = {c: 0 for c in candidates}
-
         sample = dataset.select(range(min(self.sample_size, len(dataset))))
 
         for row in sample:
@@ -241,14 +125,12 @@ class HeuristicCodeColumnDetector(ICodeColumnDetector):
                 val = row.get(col)
                 if not isinstance(val, str):
                     continue
-
                 for rx in self.code_regexes:
                     if rx.search(val):
                         hit_counter[col] += 1
 
-        detected = [col for col, hits in hit_counter.items() if hits >= self.min_hits]
+        detected = [c for c, hits in hit_counter.items() if hits >= self.min_hits]
 
-        # If content-based detection fails → fallback to name-based
         if not detected:
             detected = self._detect_by_name(dict(dataset.features))
 
@@ -259,7 +141,6 @@ class HeuristicCodeColumnDetector(ICodeColumnDetector):
 
         for col_name, feature in schema.items():
             lower_name = col_name.lower()
-
             if not any(k in lower_name for k in self.name_keywords):
                 continue
 
@@ -271,33 +152,18 @@ class HeuristicCodeColumnDetector(ICodeColumnDetector):
 
         return detected
 
+# ---------------------------------------------------------------------------
+# DeBERTa Scorer
+# ---------------------------------------------------------------------------
 
 import torch
-from typing import Optional
-from transformers import (
-    AutoModelForSequenceClassification,
-    DebertaV2Tokenizer,
-)
-
+from transformers import AutoModelForSequenceClassification, DebertaV2Tokenizer
 
 @dataclass
 class DebertaRiskScorer(IDebertaRiskScorer):
-    """
-    Learned risk scorer backed by a fine-tuned DeBERTa classifier.
-
-    Expects a binary classification head where:
-      - label 0 = safe
-      - label 1 = problematic
-    """
-
-    def __init__(
-        self,
-        model_path: str,
-        device: Optional[str] = None,
-    ):
+    def __init__(self, model_path: str, device: Optional[str] = None):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
-        # ✅ Explicit tokenizer as requested
         self.tokenizer = DebertaV2Tokenizer.from_pretrained(
             "microsoft/deberta-v3-base"
         )
@@ -308,9 +174,6 @@ class DebertaRiskScorer(IDebertaRiskScorer):
 
     @torch.no_grad()
     def score(self, code: str) -> float:
-        """
-        Returns probability in [0.0, 1.0] that the code is problematic.
-        """
         if not isinstance(code, str) or not code.strip():
             return 0.0
 
@@ -327,25 +190,19 @@ class DebertaRiskScorer(IDebertaRiskScorer):
         logits = self.model(**inputs).logits
         probs = torch.softmax(logits, dim=-1)
 
-        # Probability of class = 1 ("problematic")
         return float(probs[0, 1].item())
 
+# ---------------------------------------------------------------------------
+# Row Annotator
+# ---------------------------------------------------------------------------
 
 @dataclass
 class DatasetAnnotator(IDatasetAnnotator):
-    """
-    Row-level annotator that:
-    - Extracts code from one or more code columns
-    - Computes a single row-level risk score (max over code columns)
-    - Adds "risk_score" and "is_problematic"
-    """
-
     scorer: IRiskScorer
     code_columns: List[str]
     threshold: float = 0.5
 
     def annotate_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
-        # Collect all code snippets in this row
         codes: List[str] = []
         for col in self.code_columns:
             val = row.get(col)
@@ -353,46 +210,31 @@ class DatasetAnnotator(IDatasetAnnotator):
                 codes.append(val)
 
         if not codes:
-            # No code in this row: risk_score = 0
             risk_score = 0.0
         else:
-            # Risk = max risk across all code columns
-            scores = [self.scorer.score(code) for code in codes]
-            risk_score = float(max(scores)) if scores else 0.0
+            risk_score = float(max(self.scorer.score(code) for code in codes))
 
-        annotation = RiskAnnotation(
-            risk_score=risk_score,
-            is_problematic=bool(risk_score >= self.threshold),
-        )
-
-        # Inject into row without mutating the original dict in place
         new_row = dict(row)
-        new_row["risk_score"] = annotation.risk_score
-        new_row["is_problematic"] = annotation.is_problematic
+        new_row["risk_score"] = risk_score
+        new_row["is_problematic"] = bool(risk_score >= self.threshold)
 
         return new_row
 
+# ---------------------------------------------------------------------------
+# Dataset Processor (ANNOTATE + FILTER)
+# ---------------------------------------------------------------------------
 
 @dataclass
 class DatasetRiskProcessor(IDatasetProcessor):
-    """
-    Applies risk analysis to an entire Hugging Face Dataset or DatasetDict.
-
-    - Uses ICodeColumnDetector to identify code columns
-    - Uses IRiskScorer + DatasetAnnotator to annotate rows
-    """
-
     detector: ICodeColumnDetector
     scorer: IRiskScorer
     config: DatasetRiskConfig = field(default_factory=DatasetRiskConfig)
 
     def _detect_code_columns(self, dataset: Dataset) -> CodeDetectionResult:
-        # Prefer content-based detection if implemented
         if hasattr(self.detector, "detect_from_dataset"):
             cols = self.detector.detect_from_dataset(dataset)
         else:
-            features: Features = dataset.features
-            schema_dict: Dict[str, Any] = dict(features)
+            schema_dict: Dict[str, Any] = dict(dataset.features)
             cols = self.detector.detect_columns(schema_dict)
 
         return CodeDetectionResult(detected_columns=cols)
@@ -404,80 +246,69 @@ class DatasetRiskProcessor(IDatasetProcessor):
         if not detection.detected_columns:
             if self.config.fail_on_no_code_columns:
                 raise ValueError("No code columns detected in dataset.")
-            # No code columns → still return dataset, but risk fields will be zeroed
-            annotator = DatasetAnnotator(
-                scorer=self.scorer,
-                code_columns=[],
-                threshold=self.config.threshold,
-            )
+            annotator = DatasetAnnotator(self.scorer, [], self.config.threshold)
         else:
             annotator = DatasetAnnotator(
-                scorer=self.scorer,
-                code_columns=detection.detected_columns,
-                threshold=self.config.threshold,
+                self.scorer,
+                detection.detected_columns,
+                self.config.threshold,
             )
 
-        # map() returns a new Dataset
         return dataset.map(
             annotator.annotate_row,
             desc="Annotating dataset with risk scores",
         )
 
+    def get_problematic(self, dataset: Dataset) -> Dataset:
+        return dataset.filter(lambda r: r["is_problematic"] is True)
+
+    def get_safe(self, dataset: Dataset) -> Dataset:
+        return dataset.filter(lambda r: r["is_problematic"] is False)
+
     def process(self, dataset: HF_Dataset) -> HF_Dataset:
+        def _process_single(ds: Dataset) -> Dataset:
+            annotated = self._annotate_single_dataset(ds)
+
+            if self.config.filter_mode == "keep_problematic":
+                return self.get_problematic(annotated)
+
+            if self.config.filter_mode == "keep_safe":
+                return self.get_safe(annotated)
+
+            return annotated  # annotate-only
+
         if isinstance(dataset, DatasetDict):
-            # Process each split individually
-            processed_splits: Dict[str, Dataset] = {}
-            for split_name, split_ds in dataset.items():
-                processed_splits[split_name] = self._annotate_single_dataset(split_ds)
-            return DatasetDict(processed_splits)
+            return DatasetDict({k: _process_single(v) for k, v in dataset.items()})
 
         if isinstance(dataset, Dataset):
-            return self._annotate_single_dataset(dataset)
+            return _process_single(dataset)
 
-        raise TypeError(
-            f"DatasetRiskProcessor.process expected Dataset or DatasetDict, "
-            f"got {type(dataset)!r}"
-        )
+        raise TypeError(f"Unsupported dataset type: {type(dataset)!r}")
 
+# ---------------------------------------------------------------------------
+# Decorator API
+# ---------------------------------------------------------------------------
 
 @dataclass
 class DatasetRiskDecorator(IDatasetRiskDecorator):
-    """
-    Decorator that wraps any Hugging Face dataset loader and returns
-    an annotated dataset with risk metadata.
-
-    Example:
-
-        detector = HeuristicCodeColumnDetector()
-        scorer = scorer = DebertaRiskScorer("deberta-devign-risk-model")
-        risk_guard = DatasetRiskDecorator(detector=detector, scorer=scorer, threshold=0.5)
-
-        @risk_guard
-        def load_my_data():
-            return load_dataset("yahma/alpaca-cleaned")
-
-        ds = load_my_data()
-    """
-
     detector: ICodeColumnDetector
     scorer: IRiskScorer
     threshold: float = 0.5
     fail_on_no_code_columns: bool = False
+    filter_mode: Literal["none", "keep_safe", "keep_problematic"] = "keep_safe"
 
     def __post_init__(self) -> None:
         if not (0.0 <= self.threshold <= 1.0):
             raise ValueError("threshold must be in [0.0, 1.0]")
 
-    def __call__(
-        self,
-        loader_fn: Callable[..., HF_Dataset],
-    ) -> Callable[..., HF_Dataset]:
+    def __call__(self, loader_fn: Callable[..., HF_Dataset]):
         processor = DatasetRiskProcessor(
             detector=self.detector,
             scorer=self.scorer,
             config=DatasetRiskConfig(
                 threshold=self.threshold,
                 fail_on_no_code_columns=self.fail_on_no_code_columns,
+                filter_mode=self.filter_mode,
             ),
         )
 
@@ -485,42 +316,7 @@ class DatasetRiskDecorator(IDatasetRiskDecorator):
             ds = loader_fn(*args, **kwargs)
             return processor.process(ds)
 
-        # Preserve name and docstring for nicer debugging / introspection
         wrapped_loader.__name__ = getattr(loader_fn, "__name__", "wrapped_loader")
         wrapped_loader.__doc__ = getattr(loader_fn, "__doc__", None)
 
         return wrapped_loader
-
-
-# ---------------------------------------------------------------------------
-# Optional: basic sanity test when run as a script
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    # This block is safe to delete if you don't want any side effects.
-    from datasets import Dataset
-
-    # Tiny in-memory example
-    data = {
-        "instruction": [
-            "Write a Python function that deletes all files in /tmp",
-            "Print 'hello world'.",
-        ],
-        "response": [
-            "import os\nos.system('rm -rf /tmp/*')",
-            "print('hello world')",
-        ],
-    }
-    ds = Dataset.from_dict(data)
-
-    detector = HeuristicCodeColumnDetector()
-    scorer = scorer = DebertaRiskScorer("deberta-devign-risk-model")
-    processor = DatasetRiskProcessor(
-        detector=detector,
-        scorer=scorer,
-        config=DatasetRiskConfig(threshold=0.5),
-    )
-
-    annotated = processor.process(ds)
-    print(annotated[0])
-    print(annotated[1])
