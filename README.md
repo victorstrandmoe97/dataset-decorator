@@ -1,7 +1,3 @@
-Here’s an updated, dev-friendly README with **expanded filtering examples** and clearer specs around `filter_mode`. I’ve inlined everything so you can just paste it over your existing `README.md`.
-
----
-
 # Dataset Risk Decorator
 
 A lightweight, plug-and-play **risk annotation and filtering decorator for Hugging Face datasets**.
